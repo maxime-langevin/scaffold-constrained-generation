@@ -11,14 +11,12 @@ from scoring_functions import get_scoring_function
 from utils import Variable, seq_to_smiles, fraction_valid_smiles, unique
 from vizard_logger import VizardLog
 
-def hill_climbing(restore_prior_from='data/Prior.ckpt',
-                restore_agent_from='data/Prior.ckpt',
+def hill_climbing(restore_agent_from='data/Prior.ckpt',
                 scoring_function='tanimoto',
                 scoring_function_kwargs=None,
                 save_dir=None, learning_rate=0.0005,
                 batch_size=64, n_steps=10,
-                num_processes=0,
-                experience_replay=0):
+                num_processes=0):
 
     voc = Vocabulary(init_from_file="data/Voc")
 
@@ -33,17 +31,13 @@ def hill_climbing(restore_prior_from='data/Prior.ckpt',
     # Saved models are partially on the GPU, but if we dont have cuda enabled we can remap these
     # to the CPU.
     if torch.cuda.is_available():
-        Prior.rnn.load_state_dict(torch.load('data/Prior.ckpt'))
         Agent.rnn.load_state_dict(torch.load(restore_agent_from))
     else:
-        Prior.rnn.load_state_dict(torch.load('data/Prior.ckpt', map_location=lambda storage, loc: storage))
         Agent.rnn.load_state_dict(torch.load(restore_agent_from, map_location=lambda storage, loc: storage))
 
-    # We dont need gradients with respect to Prior
-    for param in Prior.rnn.parameters():
-        param.requires_grad = False
 
-    optimizer = torch.optim.Adam(Agent.rnn.parameters(), lr=0.0005)
+
+    optimizer = torch.optim.Adam(Agent.rnn.parameters(), lr=learning_rate)
 
     # Scoring_function
     scoring_function = get_scoring_function(scoring_function=scoring_function, num_processes=num_processes,
@@ -137,14 +131,12 @@ def hill_climbing(restore_prior_from='data/Prior.ckpt',
     torch.save(Agent.rnn.state_dict(), os.path.join(save_dir, 'Agent.ckpt'))
 
     seqs, agent_likelihood, entropy = Agent.sample(256)
-    prior_likelihood, _ = Prior.likelihood(Variable(seqs))
-    prior_likelihood = prior_likelihood.data.cpu().numpy()
     smiles = seq_to_smiles(seqs, voc)
     score = scoring_function(smiles)
     with open(os.path.join(save_dir, "sampled"), 'w') as f:
-        f.write("SMILES Score PriorLogP\n")
-        for smiles, score, prior_likelihood in zip(smiles, score, prior_likelihood):
-            f.write("{} {:5.2f} {:6.2f}\n".format(smiles, score, prior_likelihood))
+        f.write("SMILES Score \n")
+        for smiles, score in zip(smiles, score):
+            f.write("{} {:5.2f} \n".format(smiles, score))
 
 if __name__ == "__main__":
     hill_climbing()

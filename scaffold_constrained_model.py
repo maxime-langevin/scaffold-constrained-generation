@@ -70,9 +70,6 @@ class scaffold_constrained_RNN():
         if torch.cuda.is_available():
             self.rnn.cuda()
         self.voc = voc
-        
-    def set_pattern(self, pattern='CCC(*)CC'):
-        self.pattern = pattern
 
     def likelihood(self, target, max_length=140):
         """
@@ -93,18 +90,16 @@ class scaffold_constrained_RNN():
         x = torch.cat((start_token, target[:, :-1]), 1)
         h = self.rnn.init_h(batch_size)
         log_probs = Variable(torch.zeros(batch_size, max_length))
-        #log_probs = Variable(torch.zeros(batch_size))
         entropy = Variable(torch.zeros(batch_size))
         for step in range(seq_length):
             logits, h = self.rnn(x[:, step], h)
             log_prob = F.log_softmax(logits)
             prob = F.softmax(logits)
-            #log_probs += NLLLoss(log_prob, target[:, step])
             log_probs[:, step] = NLLLoss(log_prob, target[:, step])
             entropy += -torch.sum((log_prob * prob), 1)
         return log_probs, entropy
         
-    def sample(self, distributions = None, max_length=140):
+    def sample(self, pattern = "CC(*)CC", distributions = None, max_length=140):
         """
             Sample a batch of sequences
 
@@ -119,7 +114,6 @@ class scaffold_constrained_RNN():
                                     currently used.
                                     
         """
-        pattern = self.pattern
         pattern = tokenize_custom(pattern)
 
         start_token = Variable(torch.zeros(1).long())

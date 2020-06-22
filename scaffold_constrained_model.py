@@ -404,6 +404,176 @@ class scaffold_constrained_RNN():
                 opened = False            
         sequences = torch.cat(sequences, 1)
         return sequences.data, log_probs, entropy, log_probs_fragments
+    
+    def sample_efficient(self, pattern = "CC(*)CC", batch_size = 128, distributions = None, max_length=140):
+        """
+            Sample a batch of sequences
+
+            Args:
+                batch_size : Number of sequences to sample 
+                max_length:  Maximum length of the sequences
+
+            Outputs:
+            seqs: (batch_size, seq_length) The sampled sequences.
+            log_probs : (batch_size) Log likelihood for each sequence.
+            entropy: (batch_size) The entropies for the sequences. Not
+                                    currently used.
+                                    
+        """
+        pattern = np.array(tokenize_custom(pattern))
+
+        start_token = Variable(torch.zeros(batch_size).long())
+        start_token[:] = self.voc.vocab['GO']
+        
+        h = self.rnn.init_h(batch_size)
+        x = start_token
+
+        sequences = []
+        log_probs = Variable(torch.zeros(batch_size))
+        finished = torch.zeros(batch_size).byte()
+        entropy = Variable(torch.zeros(batch_size))
+        if torch.cuda.is_available():
+            finished = finished.cuda()
+        
+        opened = np.array(np.zeros(shape=batch_size), dtype=bool)
+        constrained_choices = np.array(np.zeros(shape=batch_size), dtype=bool)
+        
+        opening_parentheses = np.ones(shape=batch_size)
+        closing_parentheses = np.zeros(shape=batch_size)
+        n_steps = np.zeros(shape=batch_size)
+        
+        opened_cycles = [['A', ] for i in range(batch_size)]
+        counts = np.zeros(shape=batch_size, dtype=int)
+        
+        trackers = np.zeros(shape=batch_size, dtype=int)
+        current_pattern_indexes = np.array([pattern[index] for index in trackers])
+        for step in range(max_length):
+            
+            # Getting the position in the pattern of every example in the batch
+            previous_pattern_indexes = current_pattern_indexes
+            current_pattern_indexes = np.array([pattern[index] for index in trackers])
+            
+            # Check if a decoration is currently opened
+            opened = np.logical_or(np.logical_and(current_pattern_indexes=='*', previous_pattern_indexes=='('), opened)
+            #opened = np.logical_and(current_pattern_indexes=='*', previous_pattern_indexes=='(')
+            #opened = np.logical_or(previous_pattern_indexes=='(', opened)
+            
+            # And if we're heading to a constrained choice
+            constrained_choices = np.array([x[0] == '['  and ',' in x for x in current_pattern_indexes], dtype=bool)
+            trackers += 1 * np.logical_and(current_pattern_indexes=='*', previous_pattern_indexes=='(')
+            # Sample
+            logits, h = self.rnn(x, h)
+            prob = F.softmax(logits)
+            log_prob = F.log_softmax(logits)
+            x = torch.multinomial(prob, num_samples=1).view(-1)
+            
+            # If not opened, replace with current pattern token, else keep the sample
+            # And update number of opened and closed parentheses
+            # If closed, resume to opened
+            for i in range(batch_size):
+                
+              #  if opened[i]:
+              #      for index, s in enumerate(pattern[trackers[i]:]):
+              #          if s == ')':
+              #              opened[i] = False
+              #              break
+              #          elif s== '*':
+              #              break
+                is_open = opened[i]
+                if is_open:                  
+                    n_steps[i] += 1
+                    if n_steps[i]>50:
+                        x[i] = self.voc.vocab['EOS']
+                    opening_parentheses[i] += (x[i] == self.voc.vocab['(']).byte() * 1
+                    closing_parentheses[i] += (x[i] == self.voc.vocab[')']).byte() * 1
+                    n_opened = opening_parentheses[i]
+                    n_closed = closing_parentheses[i]
+                    if (n_opened == n_closed):
+                        opening_parentheses[i] += 1
+                        opened[i] = False
+                        trackers[i] += 1 
+                        
+                #elif opened[i]: 
+                #    x[i] = self.voc.vocab[current_pattern_indexes[i]]
+                #    opening_parentheses[i] += (x[i] == self.voc.vocab['(']).byte() * 1
+                #    closing_parentheses[i] += (x[i] == self.voc.vocab[')']).byte() * 1
+                #    n_opened = opening_parentheses[i]
+                #    n_closed = closing_parentheses[i]
+                #    if (n_opened==n_closed):
+                #        opened[i] = False
+                #    trackers[i] += 1 * (x[i] != self.voc.vocab['EOS']).byte()
+                    
+                ### No resampling
+                elif constrained_choices[i]:
+                    choices = current_pattern_indexes[i][1:-1].split(',')
+                    probabilities = prob[i, :]
+                    mask = torch.zeros_like(probabilities)
+                    for choice in choices:      
+                        mask[self.voc.vocab[choice]] = 1
+                    probabilities *= mask
+                    probabilities /= torch.sum(probabilities, dim=-1)
+                    x[i] = torch.multinomial(probabilities, num_samples=1).view(-1)
+                    trackers[i] += 1 * (x[i] != self.voc.vocab['EOS']).byte()
+                    
+                elif current_pattern_indexes[i]=='*':
+                    if pattern[trackers[i]] == ')':
+                        n_steps[i] += 1
+                        if n_steps[i]>50:
+                            x[i] = self.voc.vocab['EOS']
+                        opening_parentheses[i] += (x[i] == self.voc.vocab['(']).byte() * 1
+                        closing_parentheses[i] += (x[i] == self.voc.vocab[')']).byte() * 1
+                        n_opened = opening_parentheses[i]
+                        n_closed = closing_parentheses[i]
+                        if (n_opened==n_closed):
+                            opening_parentheses[i] += 1
+                            opened[i] = False
+                            trackers[i] += 1  
+                    else:
+                        probabilities = prob[i, :]
+                        mask = torch.ones_like(probabilities)
+                        mask[self.voc.vocab['EOS']] = 0
+                        probabilities *= mask
+                        probabilities /= torch.sum(probabilities, dim=-1)
+                        x[i] = torch.multinomial(probabilities, num_samples=1).view(-1)
+                        
+                        opening_parentheses[i] += (x[i] == self.voc.vocab['(']).byte() * 1
+                        closing_parentheses[i] += (x[i] == self.voc.vocab[')']).byte() * 1
+                        n_opened = opening_parentheses[i]
+                        n_closed = closing_parentheses[i]
+                        for cycle in range(1, 10):
+                            if (x[i] == self.voc.vocab[str(cycle)]).byte() and (cycle in opened_cycles[i]):
+                                opened_cycles[i].remove(cycle)
+                                break
+                            elif (x[i] == self.voc.vocab[str(cycle)]).byte():
+                                opened_cycles[i].append(cycle)
+                                break
+
+                        if (n_opened==n_closed+1) and len(opened_cycles[i])==1 and counts[i]>5:
+                            opening_parentheses[i] += 1
+                            opened[i] = False
+                            trackers[i] += 1 
+                        else:
+                            counts[i] += 1                        
+                        
+                else:
+                    x[i] = self.voc.vocab[current_pattern_indexes[i]]
+                    trackers[i] += 1 * (x[i] != self.voc.vocab['EOS']).byte()
+                    if (x[i] == self.voc.vocab[')']).byte():
+                        opened[i] = False
+                        
+                 
+            sequences.append(x.view(-1, 1))
+            log_probs += NLLLoss(log_prob, x)
+            entropy += -torch.sum((log_prob * prob), 1)
+
+            x = Variable(x.data)
+            EOS_sampled = (x == self.voc.vocab['EOS']).byte()
+            finished = torch.ge(finished + EOS_sampled, 1)
+            if torch.prod(finished) == 1: break
+
+        sequences = torch.cat(sequences, 1)
+        return sequences.data, log_probs, entropy
+
 
 def NLLLoss(inputs, targets):
     """

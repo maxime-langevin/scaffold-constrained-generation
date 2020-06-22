@@ -10,6 +10,7 @@ import time
 import pickle
 import re
 import threading
+import joblib
 import pexpect
 rdBase.DisableLog('rdApp.error')
 
@@ -61,6 +62,49 @@ class tanimoto():
             score = DataStructs.TanimotoSimilarity(self.query_fp, fp)
             score = min(score, self.k) / self.k
             return float(score)
+        return 0.0
+    
+    
+class mmp12():
+    """Scores structures based on Tanimoto similarity to a query structure.
+       Scores are only scaled up to k=(0,1), after which no more reward is given."""
+
+    kwargs = []
+
+    def __init__(self):
+        self.smarts = Chem.MolToSmarts(Chem.MolFromSmiles('C(NS(=O)(=O)c1ccccc1)C(=O)O'))
+        self.clf = joblib.load("data/MMP12/final_activity_model.pkl")
+        with open("data/MMP12/fps.pickle", 'rb') as handle:
+            self.fps = pickle.load(handle)
+        with open('data/MMP12/test_set.smi') as f:
+            content = f.readlines()
+        smiles = [x.strip() for x in content] 
+        self.test_fps = [AllChem.GetMorganFingerprintAsBitVect(Chem.MolFromSmiles(s), 4) for s in smiles]
+        
+        with open('data/MMP12/train_set.smi') as f:
+            content = f.readlines()
+        smiles = [x.strip() for x in content] 
+        self.train_fps = [AllChem.GetMorganFingerprintAsBitVect(Chem.MolFromSmiles(s), 4) for s in smiles]
+        
+    def __call__(self, smile):
+        mol = Chem.MolFromSmiles(smile)
+        if mol:
+            try:
+                fp = AllChem.GetMorganFingerprintAsBitVect(mol, 4)
+                fp_4 = np.array(fp).reshape(1, -1)
+                score = self.clf.predict(fp_4)[0]
+                score *=  Chem.AddHs(mol).HasSubstructMatch(Chem.MolFromSmarts(self.smarts))
+                if max([DataStructs.TanimotoSimilarity(query_fp, fp) for query_fp in self.test_fps])>0.99:
+                    print("Found original molecule: " + smile)
+                if max([DataStructs.TanimotoSimilarity(query_fp, fp) for query_fp in self.train_fps])>0.99:
+                    score = 0 
+                if score>7.5:
+                    score = 1
+                else:
+                    score *= 1/7.5
+                return float(score)
+            except:
+                return 0.0
         return 0.0
 
 class activity_model():
@@ -175,7 +219,7 @@ class Singleprocessing():
 
 def get_scoring_function(scoring_function, num_processes=None, **kwargs):
     """Function that initializes and returns a scoring function by name"""
-    scoring_function_classes = [no_sulphur, tanimoto, activity_model]
+    scoring_function_classes = [no_sulphur, tanimoto, activity_model, mmp12]
     scoring_functions = [f.__name__ for f in scoring_function_classes]
     scoring_function_class = [f for f in scoring_function_classes if f.__name__ == scoring_function][0]
 

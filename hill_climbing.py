@@ -4,32 +4,33 @@ import numpy as np
 import time
 import os
 from shutil import copyfile
-
+import gc
+from rdkit import Chem
 from model import RNN
+from scaffold_constrained_model import scaffold_constrained_RNN 
 from data_structs import Vocabulary, Experience
 from scoring_functions import get_scoring_function
 from utils import Variable, seq_to_smiles, fraction_valid_smiles, unique
 from vizard_logger import VizardLog
 
-def hill_climbing(restore_agent_from='data/Prior.ckpt',
+def hill_climbing(pattern=None, restore_agent_from='data/Prior.ckpt',
                 scoring_function='tanimoto',
                 scoring_function_kwargs=None,
                 save_dir=None, learning_rate=0.0005,
                 batch_size=64, n_steps=10,
-                num_processes=0):
+                num_processes=0, use_custom_voc="data/Voc"):
 
-    voc = Vocabulary(init_from_file="data/Voc")
+    voc = Vocabulary(init_from_file=use_custom_voc)
 
     start_time = time.time()
-
-    Prior = RNN(voc)
-    Agent = RNN(voc)
+    if pattern:
+        Agent = scaffold_constrained_RNN(voc)
+    else:
+        Agent = RNN(voc)
 
     logger = VizardLog('data/logs')
 
-    # By default restore Agent to same model as Prior, but can restore from already trained Agent too.
-    # Saved models are partially on the GPU, but if we dont have cuda enabled we can remap these
-    # to the CPU.
+
     if torch.cuda.is_available():
         Agent.rnn.load_state_dict(torch.load(restore_agent_from))
     else:
@@ -63,8 +64,11 @@ def hill_climbing(restore_agent_from='data/Prior.ckpt',
     for step in range(n_steps):
 
         # Sample from Agent
-        seqs, agent_likelihood, entropy = Agent.sample(batch_size)
-
+        if pattern:
+            seqs, agent_likelihood, entropy = Agent.sample_efficient(pattern, batch_size)
+        else:
+            seqs, agent_likelihood, entropy = Agent.sample(batch_size)
+        gc.collect()
         # Remove duplicates, ie only consider unique seqs
         unique_idxs = unique(seqs)
         seqs = seqs[unique_idxs]
@@ -74,7 +78,10 @@ def hill_climbing(restore_agent_from='data/Prior.ckpt',
         # Get prior likelihood and score
         smiles = seq_to_smiles(seqs, voc)
         score = scoring_function(smiles)
-
+        
+        new_experience = zip(smiles, score, agent_likelihood)
+        experience.add_experience(new_experience)
+        
         indexes = np.flip(np.argsort(np.array(score)))
         # Train the agent for 10 epochs on hill-climbing procedure
         for epoch in range(10):
@@ -84,11 +91,11 @@ def hill_climbing(restore_agent_from='data/Prior.ckpt',
             for j in indexes:
                 if counter>50:
                     break
-                seq = sequences[j]
-                s = smiles_list[j]
+                seq = seqs[j]
+                s = smiles[j]
                 if s not in seen_seqs:
                     seen_seqs.append(s)
-                    log_p, _ = Agent.likelihood(Variable(seq))
+                    log_p, _ = Agent.likelihood(Variable(seq).view(1, -1))
                     loss -= log_p.mean()
                     counter += 1
             loss /= counter
@@ -103,8 +110,7 @@ def hill_climbing(restore_agent_from='data/Prior.ckpt',
               step, fraction_valid_smiles(smiles) * 100, time_elapsed, time_left))
         print("  Agent    Prior   Target   Score             SMILES")
         for i in range(10):
-            print(" {:6.2f}   {:6.2f}  {:6.2f}  {:6.2f}     {}".format(score[i],
-                                                                       smiles[i]))
+            print(" {:6.2f}     {}".format(score[i],smiles[i]))
         # Need this for Vizard plotting
         step_score[0].append(step + 1)
         step_score[1].append(np.mean(score))
@@ -129,14 +135,15 @@ def hill_climbing(restore_agent_from='data/Prior.ckpt',
 
     experience.print_memory(os.path.join(save_dir, "memory"))
     torch.save(Agent.rnn.state_dict(), os.path.join(save_dir, 'Agent.ckpt'))
-
-    seqs, agent_likelihood, entropy = Agent.sample(256)
-    smiles = seq_to_smiles(seqs, voc)
-    score = scoring_function(smiles)
-    with open(os.path.join(save_dir, "sampled"), 'w') as f:
-        f.write("SMILES Score \n")
-        for smiles, score in zip(smiles, score):
-            f.write("{} {:5.2f} \n".format(smiles, score))
+    previous_smiles = []
+    with open(os.path.join(save_dir, "memory.smi"), 'w') as f:
+        for i, exp in enumerate(experience.memory):
+             try:
+                 if Chem.MolToSmiles(Chem.rdmolops.RemoveStereochemistry(Chem.MolFromSmiles(exp[0]))) not in previous_smiles:
+                     f.write("{}\n".format(exp[0]))
+                     previous_smiles.append(Chem.MolToSmiles(Chem.rdmolops.RemoveStereochemistry(Chem.MolFromSmiles(exp[0]))))
+             except:
+                 pass
 
 if __name__ == "__main__":
     hill_climbing()

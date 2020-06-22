@@ -1,4 +1,15 @@
 
+# Scaffold constrained generation
+
+Implementation of the methods described in:
+
+TODO: link paper
+
+# Why build on REINVENT's codebase?
+
+One of the major advantages of the algorithms proposed in \cite paper for scaffold constrained generation is that we build on existing models. To go through with this idea of building on existing solutions rather than designing a totally new system, we provide code for our method that builds on an existing, popular codebase.
+
+
 # REINVENT
 ## Molecular De Novo design using Recurrent Neural Networks and Reinforcement Learning
 

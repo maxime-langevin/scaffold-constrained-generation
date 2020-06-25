@@ -3,11 +3,24 @@
 
 Implementation of the methods described in:
 
-TODO: link paper
+We build on existing Recurrent Neural Network models for SMILES to perform scaffold constrained generation.
+Scaffold constrained generation and optimization is not a well studied problem, yet when dealing with drug discovery projects (especially in late stage optimization of compounds) the problem we are trying to solve.
+
+# Reproducing the results of the paper
+
+There are four different notebooks:
+
+* Distribution_learning_benchmarks.ipynb to reproduce results for distribution learning related benchmarks, on SureChEMBL and on DRD2
+* Focused_learning_experiments.ipynb to reproduce the figure showing the results of focused learning
+* MMP12_experiments.ipynb that shows the results on the MMP 12 experiments
+* Minimal_working_example.ipynb is a starting point for using the model with a given scaffold
+
+
 
 # Why build on REINVENT's codebase?
 
-One of the major advantages of the algorithms proposed in \cite paper for scaffold constrained generation is that we build on existing models. To go through with this idea of building on existing solutions rather than designing a totally new system, we provide code for our method that builds on an existing, popular codebase.
+One of the major advantages of the algorithms proposed in our work on scaffold constrained generation is that we build on existing models. To go through with this idea of building on existing solutions rather than designing a totally new system, we provide code for our method that builds on an existing, popular codebase. This way people who are already familiar with this codebase can get started very easily 
+instead of having to learn how a totally new repository works.
 
 
 # REINVENT

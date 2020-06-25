@@ -23,7 +23,9 @@ def tokenize_custom(smiles):
     """Takes a SMILES string and returns a list of tokens.
     This will swap 'Cl' and 'Br' to 'L' and 'R' and treat
     '[xx]' as one token."""
-    regex = '(\[[^\[\]]{1,6}\])'
+    
+    # Slight modification with the regex expression in the original code
+    regex = '(\[[^\[\]]{1,50}\])'
     smiles = replace_halogen(smiles)
     char_list = re.split(regex, smiles)
     tokenized = []
@@ -99,317 +101,16 @@ class scaffold_constrained_RNN():
             entropy += -torch.sum((log_prob * prob), 1)
         return log_probs, entropy
         
-    def sample(self, pattern = "CC(*)CC", distributions = None, max_length=140):
-        """
-            Sample a batch of sequences
 
-            Args:
-                batch_size : Number of sequences to sample 
-                max_length:  Maximum length of the sequences
-
-            Outputs:
-            seqs: (batch_size, seq_length) The sampled sequences.
-            log_probs : (batch_size) Log likelihood for each sequence.
-            entropy: (batch_size) The entropies for the sequences. Not
-                                    currently used.
-                                    
-        """
-        pattern = tokenize_custom(pattern)
-
-        start_token = Variable(torch.zeros(1).long())
-        start_token[:] = self.voc.vocab['GO']
-        
-        h = self.rnn.init_h(1)
-        x = start_token
-
-        sequences = []
-        log_probs = Variable(torch.zeros(1))
-        finished = torch.zeros(1).byte()
-        entropy = Variable(torch.zeros(1))
-        if torch.cuda.is_available():
-            finished = finished.cuda()
-        
-        tracker = 0
-        opened = False
-        opened_with_fragment = False
-        linear_fragment = False
-        free_fragment = False
-        one_piece_fragment = False
-        constrained_choice = False
-        n_distribution = 0 
-        log_probs_fragments = []
-        for step in range(max_length):
-           
-            if pattern[tracker] == '@' and pattern[tracker-1]=='(':
-                opened_with_fragment = True
-                tracker += 1           
-                
-            if pattern[tracker] == '*' and pattern[tracker-1]=='(':
-                opened = True
-                tracker += 1
-                
-            if pattern[tracker] == '_':
-                linear_fragment = True
-                
-            if pattern[tracker] == '@':
-                one_piece_fragment = True
-            
-            if pattern[tracker].startswith('[') and ',' in pattern[tracker]:
-                choices = pattern[tracker][1:-1].split(',')
-                constrained_choice = True
-                
-            if pattern[tracker] == '*' and pattern[tracker-1]!='(':
-                free_fragment = True
-                
-            if not opened and not linear_fragment and not free_fragment and not one_piece_fragment and not constrained_choice and not opened_with_fragment:
-
-                logits, h = self.rnn(x, h)
-                prob = F.softmax(logits)
-                log_prob = F.log_softmax(logits)
-                x = torch.multinomial(prob, num_samples=1).view(-1)
-                #if pattern[tracker] == '*':
-
-                start_token = Variable(torch.zeros(1).long())
-                start_token[:] = self.voc.vocab[pattern[tracker]]
-                #h = self.rnn.init_h(1)
-                x = start_token
-                #if pattern[tracker] == '(':
-                #    print(prob)
-
-                sequences.append(x.view(-1, 1))
-                log_probs +=  NLLLoss(log_prob, x)
-                entropy += -torch.sum((log_prob * prob), 1)
-                x = Variable(x.data)
-                # EOS_sampled = (x == self.voc.vocab['EOS']).data
-                
-                tracker += 1
-                EOS_sampled = (x == self.voc.vocab['EOS']).byte()
-                finished = torch.ge(finished + EOS_sampled, 1)
-                if torch.prod(finished) == 1: break
-              
-            if constrained_choice:
-                
-                log_probs_fragment = Variable(torch.zeros(1))
-                
-                logits, h = self.rnn(x, h)
-                prob = F.softmax(logits)
-                log_prob = F.log_softmax(logits)
-                mask = torch.zeros_like(prob)
-                for choice in choices:      
-                    mask[0, self.voc.vocab[choice]] = 1
-                prob *= mask
-                prob /= torch.sum(prob, dim=-1)
-                x = torch.multinomial(prob, num_samples=1).view(-1)
-                sequences.append(x.view(-1, 1))
-                log_probs +=  NLLLoss(log_prob, x)
-                log_probs_fragment +=  NLLLoss(log_prob, x)
-                entropy += -torch.sum((log_prob * prob), 1)
-                     
-                tracker += 1
-                constrained_choice = False
-                log_probs_fragments.append(log_probs_fragment)
-                
-            if linear_fragment:
-                if distributions:
-                    distribution, loc, scale = distributions[n_distribution]
-                    n_distribution += 1
-                else:
-                    distribution, loc, scale = 'uniform', 0, 5
-                if distribution == 'normal':
-                    flip = np.random.normal(loc, scale, size=1)
-                    n_atoms = int(np.round(flip)[0])   
-                elif distribution == 'uniform':
-                    flip = np.random.uniform(loc, scale, size=1)
-                    n_atoms = int(np.round(flip)[0])
-                
-                log_probs_fragment = Variable(torch.zeros(1))
-                for i in range(n_atoms):
-                    logits, h = self.rnn(x, h)
-                    prob = F.softmax(logits)
-                    log_prob = F.log_softmax(logits)
-                    mask = torch.zeros_like(prob)
-                    mask[0, self.voc.vocab['C']] = 1
-                    mask[0, self.voc.vocab['N']] = 1
-                    mask[0, self.voc.vocab['O']] = 1
-                    prob *= mask
-                    prob /= torch.sum(prob, dim=-1)
-                    x = torch.multinomial(prob, num_samples=1).view(-1)
-                    sequences.append(x.view(-1, 1))
-                    log_probs +=  NLLLoss(log_prob, x)
-                    log_probs_fragment +=  NLLLoss(log_prob, x)
-                    entropy += -torch.sum((log_prob * prob), 1)
-                     
-                tracker += 1
-                linear_fragment = False
-                log_probs_fragments.append(log_probs_fragment)
-                
-            if free_fragment:
-                ready_to_stop = True
-                stop = False
-                
-                if distributions:
-                    distribution, loc, scale = distributions[n_distribution]
-                    n_distribution += 1
-                else:
-                    distribution, loc, scale = 'uniform', 0, 5
-                if distribution == 'normal':
-                    flip = np.random.normal(loc, scale, size=1)
-                    n_atoms = int(np.round(flip)[0]) 
-                elif distribution == 'uniform':
-                    flip = np.random.uniform(loc, scale, size=1)
-                    n_atoms = int(np.round(flip)[0])
-                    
-                count = 0   
-                log_probs_fragment = Variable(torch.zeros(1))
-                n_opened = 0 
-                n_closed = 0
-                cycle_opened = False
-                cycle_closed = False
-                while not stop:
-                    logits, h = self.rnn(x, h)
-                    prob = F.softmax(logits)
-                    log_prob = F.log_softmax(logits)
-                    mask = torch.zeros_like(prob)
-                    x = torch.multinomial(prob, num_samples=1).view(-1)
-                    sequences.append(x.view(-1, 1))
-                    log_probs +=  NLLLoss(log_prob, x)
-                    entropy += -torch.sum((log_prob * prob), 1)
-                    
-                    if (x == self.voc.vocab['(']).byte():
-                        n_opened += 1
-                    if (x == self.voc.vocab[')']).byte():
-                        n_closed += 1
-                    if (x == self.voc.vocab['1']).byte():
-                        if cycle_opened:
-                            cycle_closed = True
-                        elif not cycle_opened:
-                            cycle_opened = True
-                    ready_to_stop = (n_opened==n_closed)
-                    if ready_to_stop and count>= n_atoms  and (cycle_opened==cycle_closed):
-                        stop = True
-                    count += 1
-                    
-                tracker += 1
-                free_fragment = False
-                log_probs_fragments.append(log_probs_fragment)
-                    
-            if one_piece_fragment:
-                ready_to_stop = True
-                stop = False
-                
-                if distributions:
-                    distribution, loc, scale = distributions[n_distribution]
-                    n_distribution += 1
-                else:
-                    distribution, loc, scale = 'uniform', 0, 5
-                if distribution == 'normal':
-                    flip = np.random.normal(loc, scale, size=1)
-                    n_atoms = int(np.round(flip)[0]) 
-                elif distribution == 'uniform':
-                    flip = np.random.uniform(loc, scale, size=1)
-                    n_atoms = int(np.round(flip)[0])
-                    
-                count = 0   
-                log_probs_fragment = Variable(torch.zeros(1))
-                n_opened = 0 
-                n_closed = 0
-                cycle_opened = False
-                cycle_closed = False
-                while not stop:
-                    previous_h = h
-                    logits, h = self.rnn(x, h)
-                 
-                    prob = F.softmax(logits)
-         
-                    log_prob = F.log_softmax(logits)
-                    x = torch.multinomial(prob, num_samples=1).view(-1)
-                    if (x == self.voc.vocab['2']).byte():
-                        h = previous_h
-                        break
-                    sequences.append(x.view(-1, 1))
-                    log_probs +=  NLLLoss(log_prob, x)
-                    entropy += -torch.sum((log_prob * prob), 1)
-                    
-                    if (x == self.voc.vocab['(']).byte():
-                        n_opened += 1
-                    if (x == self.voc.vocab[')']).byte():
-                        n_closed += 1
-                    if (x == self.voc.vocab['1']).byte():
-                        if cycle_opened:
-                            cycle_closed = True
-                        elif not cycle_opened:
-                            cycle_opened = True
-                    ready_to_stop = (n_opened==n_closed)
-                    if ready_to_stop and count>= n_atoms  and (cycle_opened==cycle_closed):
-                        stop = True
-                    count += 1
-                    
-                tracker += 1
-                one_piece_fragment = False
-                log_probs_fragments.append(log_probs_fragment)
-                
-            if opened_with_fragment:
-                while pattern[tracker]!= '*':
-                    logits, h = self.rnn(x, h)
-                    prob = F.softmax(logits)
-                    log_prob = F.log_softmax(logits)
-                    start_token = Variable(torch.zeros(1).long())
-                    start_token[:] = self.voc.vocab[pattern[tracker]]
-                    x = start_token
-                    sequences.append(x.view(-1, 1))
-                    log_probs +=  NLLLoss(log_prob, x)
-                    entropy += -torch.sum((log_prob * prob), 1)
-                    x = Variable(x.data)
-                    tracker += 1
-              
-                opened = True
-                tracker += 1
-                opened_with_fragment = False
-                
-            if opened:
-                n_opened = 1
-                n_closed = 0
-                n_steps = 0
-                log_probs_fragment = Variable(torch.zeros(1))
-                while n_opened > n_closed:
-                   # print(n_opened)
-                   # print(n_closed)
-                    
-                    logits, h = self.rnn(x, h)
-                    prob = F.softmax(logits)
-                    log_prob = F.log_softmax(logits)
-                    if False: #n_steps<5 and (n_opened-n_closed)==1:
-                        #closing = True
-                        #while closing: 
-                        prob[0, self.voc.vocab[')']] = 0
-                        
-                        x = torch.multinomial(torch.softmax(prob, dim=-1), num_samples=1).view(-1)
-                    else:        
-                        x = torch.multinomial(prob, num_samples=1).view(-1)
-                    #print(prob)
-                    #print(x)
-                    sequences.append(x.view(-1, 1))
-                    log_probs +=  NLLLoss(log_prob, x)
-                    log_probs_fragment += NLLLoss(log_prob, x)
-                    entropy += -torch.sum((log_prob * prob), 1)
-                    if (x == self.voc.vocab['(']).byte():
-                        n_opened += 1
-                    if (x == self.voc.vocab[')']).byte():
-                        n_closed += 1
-                    n_steps += 1
-                    if n_steps>50:
-                        break
-                log_probs_fragments.append(log_probs_fragment)
-                tracker += 1
-                opened = False            
-        sequences = torch.cat(sequences, 1)
-        return sequences.data, log_probs, entropy, log_probs_fragments
     
-    def sample_efficient(self, pattern = "CC(*)CC", batch_size = 128, distributions = None, max_length=140):
-        """
-            Sample a batch of sequences
+    def sample(self, pattern = "CC(*)CC", batch_size = 128, max_length=140):
+        """ 
+            Only difference with classic RNN based sampling.
+            Sample a batch of sequences with given scaffold.
 
             Args:
+                pattern: Scaffold that need to be respected
+                distributions: Distribution on the length of 
                 batch_size : Number of sequences to sample 
                 max_length:  Maximum length of the sequences
 
@@ -420,6 +121,8 @@ class scaffold_constrained_RNN():
                                     currently used.
                                     
         """
+        
+        # get the tokenized version of the pattern
         pattern = np.array(tokenize_custom(pattern))
 
         start_token = Variable(torch.zeros(batch_size).long())
@@ -427,26 +130,37 @@ class scaffold_constrained_RNN():
         
         h = self.rnn.init_h(batch_size)
         x = start_token
-
+        
         sequences = []
         log_probs = Variable(torch.zeros(batch_size))
         finished = torch.zeros(batch_size).byte()
         entropy = Variable(torch.zeros(batch_size))
+
         if torch.cuda.is_available():
             finished = finished.cuda()
         
+        # tracks if there is an opened parenthesis
         opened = np.array(np.zeros(shape=batch_size), dtype=bool)
+        
+        # tracks if there is a constrained choice 
         constrained_choices = np.array(np.zeros(shape=batch_size), dtype=bool)
         
+        # tracks number of opening and closing parentheses 
         opening_parentheses = np.ones(shape=batch_size)
         closing_parentheses = np.zeros(shape=batch_size)
+        
+        # tracks number of steps in the fragment that is being sampled 
+        # (if the RNN never samples the matching parenthesis we terminate sampling of this given molecule
         n_steps = np.zeros(shape=batch_size)
         
+        # tracks opened cycles
         opened_cycles = [['A', ] for i in range(batch_size)]
         counts = np.zeros(shape=batch_size, dtype=int)
         
+        # tracks the position in the scaffold's pattern
         trackers = np.zeros(shape=batch_size, dtype=int)
         current_pattern_indexes = np.array([pattern[index] for index in trackers])
+        
         for step in range(max_length):
             
             # Getting the position in the pattern of every example in the batch
@@ -455,13 +169,14 @@ class scaffold_constrained_RNN():
             
             # Check if a decoration is currently opened
             opened = np.logical_or(np.logical_and(current_pattern_indexes=='*', previous_pattern_indexes=='('), opened)
-            #opened = np.logical_and(current_pattern_indexes=='*', previous_pattern_indexes=='(')
-            #opened = np.logical_or(previous_pattern_indexes=='(', opened)
             
             # And if we're heading to a constrained choice
             constrained_choices = np.array([x[0] == '['  and ',' in x for x in current_pattern_indexes], dtype=bool)
+            
+            # In this case we already sampled this branch and need to move on for one step in the pattern
             trackers += 1 * np.logical_and(current_pattern_indexes=='*', previous_pattern_indexes=='(')
-            # Sample
+            
+            # Sample according to conditional probability distribution of the RNN
             logits, h = self.rnn(x, h)
             prob = F.softmax(logits)
             log_prob = F.log_softmax(logits)
@@ -470,15 +185,13 @@ class scaffold_constrained_RNN():
             # If not opened, replace with current pattern token, else keep the sample
             # And update number of opened and closed parentheses
             # If closed, resume to opened
+            
+            # iterating over the batch: 
+            # there might be a smart way to parallelize all this but we didn't focus on it
+            # as sampling speed is not necessarly a bottleneck in our applications
             for i in range(batch_size):
                 
-              #  if opened[i]:
-              #      for index, s in enumerate(pattern[trackers[i]:]):
-              #          if s == ')':
-              #              opened[i] = False
-              #              break
-              #          elif s== '*':
-              #              break
+                # to keep track of opening and closing parentheses 
                 is_open = opened[i]
                 if is_open:                  
                     n_steps[i] += 1
@@ -493,18 +206,10 @@ class scaffold_constrained_RNN():
                         opened[i] = False
                         trackers[i] += 1 
                         
-                #elif opened[i]: 
-                #    x[i] = self.voc.vocab[current_pattern_indexes[i]]
-                #    opening_parentheses[i] += (x[i] == self.voc.vocab['(']).byte() * 1
-                #    closing_parentheses[i] += (x[i] == self.voc.vocab[')']).byte() * 1
-                #    n_opened = opening_parentheses[i]
-                #    n_closed = closing_parentheses[i]
-                #    if (n_opened==n_closed):
-                #        opened[i] = False
-                #    trackers[i] += 1 * (x[i] != self.voc.vocab['EOS']).byte()
-                    
-                ### No resampling
+                # if we have a constrained choice 
+                # we apply a mask on the probability vector
                 elif constrained_choices[i]:
+                    
                     choices = current_pattern_indexes[i][1:-1].split(',')
                     probabilities = prob[i, :]
                     mask = torch.zeros_like(probabilities)
@@ -514,7 +219,9 @@ class scaffold_constrained_RNN():
                     probabilities /= torch.sum(probabilities, dim=-1)
                     x[i] = torch.multinomial(probabilities, num_samples=1).view(-1)
                     trackers[i] += 1 * (x[i] != self.voc.vocab['EOS']).byte()
-                    
+                
+                # In this case we need to sample
+                # We make the distinction between branch (first case) and linked (second case)    
                 elif current_pattern_indexes[i]=='*':
                     if pattern[trackers[i]] == ')':
                         n_steps[i] += 1
@@ -529,6 +236,7 @@ class scaffold_constrained_RNN():
                             opened[i] = False
                             trackers[i] += 1  
                     else:
+                        # The following lines are to avoid that sampling finishes too early
                         probabilities = prob[i, :]
                         mask = torch.ones_like(probabilities)
                         mask[self.voc.vocab['EOS']] = 0
@@ -547,14 +255,23 @@ class scaffold_constrained_RNN():
                             elif (x[i] == self.voc.vocab[str(cycle)]).byte():
                                 opened_cycles[i].append(cycle)
                                 break
-
-                        if (n_opened==n_closed+1) and len(opened_cycles[i])==1 and counts[i]>5:
+                                
+                        # Override with specified distribution for minimal fragment size
+                        # You could also make this an argument of the sample function
+                        # You can also keep this parameter fixed manually as it currently is
+                        # The sampling of the linker will only stop when size is > to minimal_linked_size 
+                        # and cycles and branches are completed
+                        
+                        minimal_linker_size = 5
+                        
+                        if (n_opened==n_closed+1) and len(opened_cycles[i])==1 and counts[i]>minimal_linker_size:
                             opening_parentheses[i] += 1
                             opened[i] = False
                             trackers[i] += 1 
                         else:
                             counts[i] += 1                        
-                        
+                
+                # If we avoided all previous cases, then we do not sample and instead read the pattern
                 else:
                     x[i] = self.voc.vocab[current_pattern_indexes[i]]
                     trackers[i] += 1 * (x[i] != self.voc.vocab['EOS']).byte()

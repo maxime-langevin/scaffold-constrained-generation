@@ -65,7 +65,7 @@ def hill_climbing(pattern=None, restore_agent_from='data/Prior.ckpt',
 
         # Sample from Agent
         if pattern:
-            seqs, agent_likelihood, entropy = Agent.sample_efficient(pattern, batch_size)
+            seqs, agent_likelihood, entropy = Agent.sample(pattern, batch_size)
         else:
             seqs, agent_likelihood, entropy = Agent.sample(batch_size)
         gc.collect()

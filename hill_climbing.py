@@ -130,7 +130,11 @@ def hill_climbing(pattern=None, restore_agent_from='data/Prior.ckpt',
     # scored sequences seen during training)
     if not save_dir:
         save_dir = 'data/results/run_' + time.strftime("%Y-%m-%d-%H_%M_%S", time.localtime())
-    os.makedirs(save_dir)
+    try:
+        os.makedirs(save_dir)
+    except:
+        print("Folder already existing... overwriting previous results")
+        
     copyfile('train_agent.py', os.path.join(save_dir, "train_agent.py"))
 
     experience.print_memory(os.path.join(save_dir, "memory"))

@@ -34,10 +34,10 @@ parser.add_argument('--num-processes', action='store', dest='num_processes',
                     help='Number of processes used to run the scoring function. "0" means ' \
                     'that the scoring function will be run in the main process.')
 parser.add_argument('--prior', action='store', dest='restore_prior_from',
-                    default='data/Prior.ckpt',
+                    default='data/DistributionLearningBenchmark/Prior_ChEMBL_randomized.ckpt',
                     help='Path to an RNN checkpoint file to use as a Prior')
 parser.add_argument('--agent', action='store', dest='restore_agent_from',
-                    default='data/Prior.ckpt',
+                    default='data/DistributionLearningBenchmark/Prior_ChEMBL_randomized.ckpt',
                     help='Path to an RNN checkpoint file to use as a Agent.')
 parser.add_argument('--save-dir', action='store', dest='save_dir',
                     help='Path where results and model are saved. Default is data/results/run_<datetime>.')

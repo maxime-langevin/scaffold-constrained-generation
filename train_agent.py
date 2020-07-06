@@ -22,7 +22,7 @@ def train_agent(restore_prior_from='data/Prior.ckpt',
                 num_processes=0, sigma=60,
                 experience_replay=0):
 
-    voc = Vocabulary(init_from_file="data/Voc")
+    voc = Vocabulary(init_from_file='data/DistributionLearningBenchmark/Voc')
 
     start_time = time.time()
 

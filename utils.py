@@ -42,3 +42,33 @@ def unique(arr):
     if torch.cuda.is_available():
         return torch.LongTensor(np.sort(idxs)).cuda()
     return torch.LongTensor(np.sort(idxs))
+
+def replace_halogen(string):
+    """Regex to replace Br and Cl with single letters"""
+    br = re.compile('Br')
+    cl = re.compile('Cl')
+    string = br.sub('R', string)
+    string = cl.sub('L', string)
+
+    return string
+
+def tokenize_custom(smiles):
+    """Takes a SMILES string and returns a list of tokens.
+    This will swap 'Cl' and 'Br' to 'L' and 'R' and treat
+    '[xx]' as one token."""
+    
+    # Slight modification with the regex expression in the original code
+    regex = '(\[[^\[\]]{1,50}\])'
+    smiles = replace_halogen(smiles)
+    char_list = re.split(regex, smiles)
+    tokenized = []
+    for char in char_list:
+        if char == '*':
+            tokenized.append(char)
+        if char.startswith('['):
+            tokenized.append(char)
+        else:
+            chars = [unit for unit in char]
+            [tokenized.append(unit) for unit in chars]
+    tokenized.append('EOS')
+    return tokenized

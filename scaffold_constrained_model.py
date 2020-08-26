@@ -1,72 +1,19 @@
+# Copyright Notice: Permission is hereby granted, free of charge, and for non-commercial use only, to any person # from academic research or non-profit organization obtaining a copy of this software and associated             # documentation files (the "Software"), to use, copy, modify, or merge the Software, subject to the following      # conditions: this permission notice shall be included in all copies or substantial portions of the Software. All  # other rights are reserved. The Software is provided 'as is", without warranty of any kind, express or implied,  # including the warranties of noninfringement.
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from data_structs import tokenize
-from utils import Variable
+from utils import Variable, replace_halogen, tokenize_custom
+from model import MultiGRU
 import re
 import random
 import numpy as np
 from scipy.stats import uniform
 
-
-def replace_halogen(string):
-    """Regex to replace Br and Cl with single letters"""
-    br = re.compile('Br')
-    cl = re.compile('Cl')
-    string = br.sub('R', string)
-    string = cl.sub('L', string)
-
-    return string
-
-def tokenize_custom(smiles):
-    """Takes a SMILES string and returns a list of tokens.
-    This will swap 'Cl' and 'Br' to 'L' and 'R' and treat
-    '[xx]' as one token."""
-    
-    # Slight modification with the regex expression in the original code
-    regex = '(\[[^\[\]]{1,50}\])'
-    smiles = replace_halogen(smiles)
-    char_list = re.split(regex, smiles)
-    tokenized = []
-    for char in char_list:
-        if char == '*':
-            tokenized.append(char)
-        if char.startswith('['):
-            tokenized.append(char)
-        else:
-            chars = [unit for unit in char]
-            [tokenized.append(unit) for unit in chars]
-    tokenized.append('EOS')
-    return tokenized
-
-class MultiGRU(nn.Module):
-    """ Implements a three layer GRU cell including an embedding layer
-       and an output linear layer back to the size of the vocabulary"""
-    def __init__(self, voc_size):
-        super(MultiGRU, self).__init__()
-        self.embedding = nn.Embedding(voc_size, 128)
-        self.gru_1 = nn.GRUCell(128, 512)
-        self.gru_2 = nn.GRUCell(512, 512)
-        self.gru_3 = nn.GRUCell(512, 512)
-        self.linear = nn.Linear(512, voc_size)
-
-    def forward(self, x, h):
-        x = self.embedding(x)
-        h_out = Variable(torch.zeros(h.size()))
-        x = h_out[0] = self.gru_1(x, h[0])
-        x = h_out[1] = self.gru_2(x, h[1])
-        x = h_out[2] = self.gru_3(x, h[2])
-        x = self.linear(x)
-        return x, h_out
-
-    def init_h(self, batch_size):
-        # Initial cell state is zero
-        return Variable(torch.zeros(3, batch_size, 512))
-
 class scaffold_constrained_RNN():
-    """Implements the Prior and Agent RNN. Needs a Vocabulary instance in
-    order to determine size of the vocabulary and index of the END token"""
+    """Implements the scaffold constrained RNN sampler"""
     def __init__(self, voc):
         self.rnn = MultiGRU(voc.vocab_size)
         if torch.cuda.is_available():

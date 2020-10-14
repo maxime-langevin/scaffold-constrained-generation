@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from rdkit import Chem
+import re
 
 def Variable(tensor):
     """Wrapper for torch.autograd.Variable that also accepts

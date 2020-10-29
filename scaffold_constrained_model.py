@@ -93,7 +93,7 @@ class scaffold_constrained_RNN():
         constrained_choices = np.array(np.zeros(shape=batch_size), dtype=bool)
         
         # tracks number of opening and closing parentheses 
-        opening_parentheses = np.ones(shape=batch_size)
+        opening_parentheses = np.zeros(shape=batch_size)
         closing_parentheses = np.zeros(shape=batch_size)
         
         # tracks number of steps in the fragment that is being sampled 
@@ -121,7 +121,7 @@ class scaffold_constrained_RNN():
             constrained_choices = np.array([x[0] == '['  and ',' in x for x in current_pattern_indexes], dtype=bool)
             
             # In this case we already sampled this branch and need to move on for one step in the pattern
-            trackers += 1 * np.logical_and(current_pattern_indexes=='*', previous_pattern_indexes=='(')
+            #trackers += 1 * np.logical_and(current_pattern_indexes=='*', previous_pattern_indexes=='(')
             
             # Sample according to conditional probability distribution of the RNN
             logits, h = self.rnn(x, h)
@@ -140,7 +140,7 @@ class scaffold_constrained_RNN():
                 
                 # to keep track of opening and closing parentheses 
                 is_open = opened[i]
-                if is_open:                  
+                if False: #is_open:                  
                     n_steps[i] += 1
                     if n_steps[i]>50:
                         x[i] = self.voc.vocab['EOS']
@@ -170,7 +170,7 @@ class scaffold_constrained_RNN():
                 # In this case we need to sample
                 # We make the distinction between branch (first case) and linked (second case)    
                 elif current_pattern_indexes[i]=='*':
-                    if pattern[trackers[i]] == ')':
+                    if pattern[trackers[i]+1] == ')':
                         n_steps[i] += 1
                         if n_steps[i]>50:
                             x[i] = self.voc.vocab['EOS']
@@ -178,10 +178,11 @@ class scaffold_constrained_RNN():
                         closing_parentheses[i] += (x[i] == self.voc.vocab[')']).byte() * 1
                         n_opened = opening_parentheses[i]
                         n_closed = closing_parentheses[i]
-                        if (n_opened==n_closed):
+                        
+                        if (n_opened+1==n_closed):
                             opening_parentheses[i] += 1
                             opened[i] = False
-                            trackers[i] += 1  
+                            trackers[i] += 2  
                     else:
                         # The following lines are to avoid that sampling finishes too early
                         probabilities = prob[i, :]
@@ -211,7 +212,7 @@ class scaffold_constrained_RNN():
                         
                         minimal_linker_size = 5
                         
-                        if (n_opened==n_closed+1) and len(opened_cycles[i])==1 and counts[i]>minimal_linker_size:
+                        if (n_opened==n_closed) and len(opened_cycles[i])==1 and counts[i]>minimal_linker_size:
                             opening_parentheses[i] += 1
                             opened[i] = False
                             trackers[i] += 1 
@@ -222,6 +223,8 @@ class scaffold_constrained_RNN():
                 else:
                     x[i] = self.voc.vocab[current_pattern_indexes[i]]
                     trackers[i] += 1 * (x[i] != self.voc.vocab['EOS']).byte()
+                    #opening_parentheses[i] += (x[i] == self.voc.vocab['(']).byte() * 1
+                    #closing_parentheses[i] += (x[i] == self.voc.vocab[')']).byte() * 1
                     if (x[i] == self.voc.vocab[')']).byte():
                         opened[i] = False
                         

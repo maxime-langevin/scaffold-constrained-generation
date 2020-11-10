@@ -240,7 +240,7 @@ class scaffold_constrained_RNN():
             if torch.prod(finished) == 1: break
 
         sequences = torch.cat(sequences, 1)
-        return sequences.data, log_probs, entropy
+        return sequences.data, log_probs.data, entropy.data
 
 
 def NLLLoss(inputs, targets):

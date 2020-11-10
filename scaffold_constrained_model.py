@@ -102,6 +102,7 @@ class scaffold_constrained_RNN():
         
         # tracks opened cycles
         opened_cycles = [['A', ] for i in range(batch_size)]
+        opened_cycles_outside_sampling = [[] for i in range(batch_size)]
         counts = np.zeros(shape=batch_size, dtype=int)
         
         # tracks the position in the scaffold's pattern
@@ -140,22 +141,10 @@ class scaffold_constrained_RNN():
                 
                 # to keep track of opening and closing parentheses 
                 is_open = opened[i]
-                if False: #is_open:                  
-                    n_steps[i] += 1
-                    if n_steps[i]>50:
-                        x[i] = self.voc.vocab['EOS']
-                    opening_parentheses[i] += (x[i] == self.voc.vocab['(']).byte() * 1
-                    closing_parentheses[i] += (x[i] == self.voc.vocab[')']).byte() * 1
-                    n_opened = opening_parentheses[i]
-                    n_closed = closing_parentheses[i]
-                    if (n_opened == n_closed):
-                        opening_parentheses[i] += 1
-                        opened[i] = False
-                        trackers[i] += 1 
                         
                 # if we have a constrained choice 
                 # we apply a mask on the probability vector
-                elif constrained_choices[i]:
+                if constrained_choices[i]:
                     
                     choices = current_pattern_indexes[i][1:-1].split(',')
                     probabilities = prob[i, :]
@@ -188,6 +177,10 @@ class scaffold_constrained_RNN():
                         probabilities = prob[i, :]
                         mask = torch.ones_like(probabilities)
                         mask[self.voc.vocab['EOS']] = 0
+                        
+                        # If cycle still opened outside the sampling, we need to avoid it
+                        for cycle in opened_cycles_outside_sampling[i]:
+                            mask[self.voc.vocab[str(cycle)]] = 0
                         probabilities *= mask
                         probabilities /= torch.sum(probabilities, dim=-1)
                         x[i] = torch.multinomial(probabilities, num_samples=1).view(-1)
@@ -227,6 +220,14 @@ class scaffold_constrained_RNN():
                     #closing_parentheses[i] += (x[i] == self.voc.vocab[')']).byte() * 1
                     if (x[i] == self.voc.vocab[')']).byte():
                         opened[i] = False
+                        
+                    for cycle in range(1, 10):
+                        if (x[i] == self.voc.vocab[str(cycle)]).byte() and (cycle in opened_cycles_outside_sampling[i]):
+                            opened_cycles_outside_sampling[i].remove(cycle)
+                            break
+                        elif (x[i] == self.voc.vocab[str(cycle)]).byte():
+                            opened_cycles_outside_sampling[i].append(cycle)
+                            break
                         
                  
             sequences.append(x.view(-1, 1))
